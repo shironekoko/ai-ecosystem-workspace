@@ -1,0 +1,40 @@
+services:
+  # ----------------------------------------
+  # 1. PostgreSQL Service
+  # ----------------------------------------
+  postgres:
+    image: postgres:15
+    container_name: my_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: db_user
+      POSTGRES_PASSWORD: db_password
+      POSTGRES_DB: label_studio_db
+    volumes:
+      - postgresql-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+
+  # ----------------------------------------
+  # 2. Label Studio Service
+  # ----------------------------------------
+  label-studio:
+    image: heartexlabs/label-studio:latest
+    container_name: my_label_studio
+    restart: always
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    environment:
+      # ตั้งค่าให้เชื่อมต่อกับ PostgreSQL
+      - DJANGO_DB=default
+      - POSTGRE_NAME=label_studio_db
+      - POSTGRE_USER=db_user
+      - POSTGRE_PASSWORD=db_password
+      - POSTGRE_PORT=5432
+      - POSTGRE_HOST=postgres
+
+# ประกาศใช้งาน Volume แบบแยกชื่อ
+volumes:
+  postgresql-data:
