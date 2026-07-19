@@ -27,7 +27,6 @@ services:
     depends_on:
       - postgres
     environment:
-      # ตั้งค่าให้เชื่อมต่อกับ PostgreSQL
       - DJANGO_DB=default
       - POSTGRE_NAME=label_studio_db
       - POSTGRE_USER=db_user
@@ -35,6 +34,5 @@ services:
       - POSTGRE_PORT=5432
       - POSTGRE_HOST=postgres
 
-# ประกาศใช้งาน Volume แบบแยกชื่อ
 volumes:
   postgresql-data:
