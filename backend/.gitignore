@@ -4,3 +4,4 @@ sandbox/
 .env
 storage/logs/
 *.log
+logs
