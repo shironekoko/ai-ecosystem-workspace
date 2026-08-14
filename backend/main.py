@@ -1,9 +1,13 @@
 """
-FastAPI Application — Entry Point
+FastAPI Application — Main Entry Point with Comprehensive OpenAPI Metadata
 
-รัน: uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
-Swagger UI: http://localhost:8000/docs
-ReDoc: http://localhost:8000/redoc
+รันเซิร์ฟเวอร์:
+    uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+เอกสาร API (API Documentation):
+    Swagger UI: http://localhost:8000/docs
+    ReDoc UI:   http://localhost:8000/redoc
+    OpenAPI JSON Schema: http://localhost:8000/openapi.json
 """
 
 from contextlib import asynccontextmanager
@@ -15,50 +19,102 @@ from core.config import settings
 from core.database import Base, engine
 from core.minio_client import ensure_bucket
 
+# ── Import Feature Routers ──
+from app.features.auth.router import router as auth_router
+from app.features.profile.router import router as profile_router
+from app.features.system.router import router as system_router
+from app.features.storage.router import router as storage_router
+from app.features.tasks.router import router as tasks_router
+from app.features.annotation.router import router as annotation_router
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Startup / Shutdown events
-
-    Startup:
-    - สร้าง database tables (ถ้ายังไม่มี)
-    - สร้าง MinIO bucket สำหรับ profile images (ถ้ายังไม่มี)
+    Startup / Shutdown Lifecycle Events
     """
     # ── Startup ──
-    # Import models เพื่อให้ Base.metadata รู้จัก tables ทั้งหมด
     import app.features.auth.models  # noqa: F401
 
     try:
         Base.metadata.create_all(bind=engine)
-        print("Database tables created")
+        print("✅ Database tables created successfully")
     except Exception as e:
-        print(f"Database setup failed (server may not be ready): {e}")
+        print(f"⚠️ Database setup warning: {e}")
 
     try:
         ensure_bucket(settings.minio_profile_bucket)
-        print(f"MinIO bucket '{settings.minio_profile_bucket}' ready")
+        print(f"✅ MinIO bucket '{settings.minio_profile_bucket}' ready")
     except Exception as e:
-        print(f"MinIO bucket setup failed (server may not be ready): {e}")
+        print(f"⚠️ MinIO bucket setup warning: {e}")
 
     yield
 
     # ── Shutdown ──
-    print("Application shutting down")
+    print("🛑 Application shutting down")
 
 
-# ── สร้าง FastAPI app ──
+# ── OpenAPI Tags Metadata (FastAPI Metadata Tutorial) ──
+tags_metadata = [
+    {
+        "name": "Health",
+        "description": "API สำหรับตรวจสอบสถานะเบื้องต้นของแอปพลิเคชัน (Health Check)",
+    },
+    {
+        "name": "System & Infrastructure",
+        "description": "API สำหรับตรวจสอบสถานะการเชื่อมต่อบริการทั้งหมดในระบบ (PostgreSQL, MinIO, Redis, Label Studio)",
+    },
+    {
+        "name": "Authentication",
+        "description": "ระบบยืนยันตัวตน สมาชิก Sign-up, Login ออกแบบในรูปแบบ Stateless JWT Bearer Token Pair พร้อม Token Rotation",
+    },
+    {
+        "name": "Profile",
+        "description": "ระบบจัดการโปรไฟล์ผู้ใช้งาน อัปโหลดและจัดการรูปภาพโปรไฟล์ผ่าน MinIO S3 Object Storage",
+    },
+    {
+        "name": "MinIO Object Storage",
+        "description": "บริการจัดการไฟล์วัตถุ (Object Storage) การเรียกดู Bucket, รายการไฟล์ และการสร้าง Presigned Download URL",
+    },
+    {
+        "name": "Redis Cache & ARQ Tasks",
+        "description": "บริการจัดเก็บข้อมูลชั่วคราว (Key-Value Cache) และระบบคิวงานประมวลผลเบื้องหลังแบบ Asynchronous (ARQ Queue)",
+    },
+    {
+        "name": "Label Studio Annotation",
+        "description": "บริการเชื่อมต่อกับแพลตฟอร์มติดฉลากข้อมูล AI/ML (Data Labeling & Annotation Platform)",
+    },
+]
+
+# ── สร้าง FastAPI app พร้อม Metadata ครบถ้วน ──
 app = FastAPI(
-    title="AI Ecosystem — Auth API",
+    title="AI Ecosystem Multi-Service Core API",
     description=(
-        "ระบบ Authentication & Profile Management\n\n"
-        "- **Sign-up**: สมัครสมาชิก\n"
-        "- **Login**: เข้าสู่ระบบ → ได้ JWT token\n"
-        "- **Logout**: ออกจากระบบ\n"
-        "- **Profile**: ดู/แก้ไขโปรไฟล์ + รูปโปรไฟล์ผ่าน MinIO\n\n"
-        "Use the **Authorize** button above to enter your Bearer token for protected endpoints"
+        "## ระบบบริการส่วนหลัง AI Ecosystem (Backend Multi-Service Architecture)\n\n"
+        "แอปพลิเคชันนี้ทำหน้าที่เป็น **Core Backend Server** สำหรับเชื่อมต่อและให้บริการผ่านองค์ประกอบต่างๆ:\n\n"
+        "* **Relational Database**: PostgreSQL สำหรับเก็บข้อมูลบัญชีผู้ใช้และ Metadata\n"
+        "* **Cloud Object Storage**: MinIO (S3 Compatible) สำหรับเก็บไฟล์สื่อและรูปภาพ\n"
+        "* **In-Memory Cache & Message Broker**: Redis & ARQ สำหรับระบบแคชและคิวงานเบื้องหลัง\n"
+        "* **Data Annotation Platform**: Label Studio สำหรับจัดการชุดข้อมูลและติดฉลากสำหรับ AI/ML\n\n"
+        "--- \n"
+        "### 🔐 การยืนยันตัวตน (Authentication)\n"
+        "ปุ่ม **Authorize** ด้านบนสุดใช้ใส่ค่า **Bearer Access Token** ที่ได้จากการเรียก API `/auth/login`"
     ),
     version="1.0.0",
+    terms_of_service="https://example.com/terms/",
+    contact={
+        "name": "AI Ecosystem Developer Team",
+        "url": "https://example.com/support",
+        "email": "dev-team@example.com",
+    },
+    license_info={
+        "name": "MIT License",
+        "url": "https://opensource.org/licenses/MIT",
+    },
+    openapi_tags=tags_metadata,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
     lifespan=lifespan,
 )
 
@@ -71,21 +127,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Include Routers ──
-from app.features.auth.router import router as auth_router
-from app.features.profile.router import router as profile_router
-
+# ── Register Routers ──
+app.include_router(system_router)
 app.include_router(auth_router)
 app.include_router(profile_router)
+app.include_router(storage_router)
+app.include_router(tasks_router)
+app.include_router(annotation_router)
 
 
-# ── Root Endpoint ──
-@app.get("/", tags=["Health"])
+# ── Root Health Check ──
+@app.get("/", tags=["Health"], summary="Root Health Endpoint")
 def root():
-    """Health check endpoint"""
+    """Health check endpoint ระดับรากของเซิร์ฟเวอร์"""
     return {
         "status": "ok",
-        "service": "AI Ecosystem Auth API",
+        "service": "AI Ecosystem Multi-Service Core API",
         "version": "1.0.0",
-        "docs": "/docs",
+        "docs_swagger": "/docs",
+        "docs_redoc": "/redoc",
+        "openapi_json": "/openapi.json",
     }

@@ -1,0 +1,1457 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AI Ecosystem Multi-Service Core API",
+    "description": "## ระบบบริการส่วนหลัง AI Ecosystem (Backend Multi-Service Architecture)\n\nแอปพลิเคชันนี้ทำหน้าที่เป็น **Core Backend Server** สำหรับเชื่อมต่อและให้บริการผ่านองค์ประกอบต่างๆ:\n\n* **Relational Database**: PostgreSQL สำหรับเก็บข้อมูลบัญชีผู้ใช้และ Metadata\n* **Cloud Object Storage**: MinIO (S3 Compatible) สำหรับเก็บไฟล์สื่อและรูปภาพ\n* **In-Memory Cache & Message Broker**: Redis & ARQ สำหรับระบบแคชและคิวงานเบื้องหลัง\n* **Data Annotation Platform**: Label Studio สำหรับจัดการชุดข้อมูลและติดฉลากสำหรับ AI/ML\n\n--- \n### 🔐 การยืนยันตัวตน (Authentication)\nปุ่ม **Authorize** ด้านบนสุดใช้ใส่ค่า **Bearer Access Token** ที่ได้จากการเรียก API `/auth/login`",
+    "termsOfService": "https://example.com/terms/",
+    "contact": {
+      "name": "AI Ecosystem Developer Team",
+      "url": "https://example.com/support",
+      "email": "dev-team@example.com"
+    },
+    "license": {
+      "name": "MIT License",
+      "url": "https://opensource.org/licenses/MIT"
+    },
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/system/health": {
+      "get": {
+        "tags": [
+          "System & Infrastructure"
+        ],
+        "summary": "ตรวจสอบสถานะความพร้อมของบริการทั้งหมด (System Health Check)",
+        "description": "**การตรวจสอบสถานะการเชื่อมต่อ (Health Check)**:\n- **PostgreSQL**: ส่งคำสั่ง `SELECT 1` ผ่าน SQLAlchemy\n- **MinIO**: เรียกคำสั่ง `list_buckets()` เพื่อตรวจสอบ S3 API\n- **Redis**: สื่อสารคำสั่ง `PING` ผ่าน Redis client\n- **Label Studio**: ตรวจสอบการเชื่อมต่อ API ของ Label Studio SDK",
+        "operationId": "check_system_health_system_health_get",
+        "responses": {
+          "200": {
+            "description": "คืนค่าสถานะการเชื่อมต่อของ PostgreSQL, MinIO, Redis และ Label Studio",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemHealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/signup": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "สมัครสมาชิกใหม่",
+        "description": "สร้างบัญชีผู้ใช้ใหม่\n\n- ตรวจสอบ email / username ซ้ำ\n- Hash password ด้วย bcrypt\n- บันทึกลง PostgreSQL",
+        "operationId": "signup_auth_signup_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignUpRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "เข้าสู่ระบบ",
+        "description": "ตรวจสอบ email + password แล้วออก JWT token pair\n\n- Access token (30 นาที)\n- Refresh token (7 วัน)",
+        "operationId": "login_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "ออกจากระบบ",
+        "description": "ออกจากระบบ — client ควรลบ token ออกจาก storage\n\n(Stateless JWT: ฝั่ง server ไม่ได้ blacklist token\nแต่ยืนยันว่า token ยัง valid ก่อนตอบ)",
+        "operationId": "logout_auth_logout_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "ต่ออายุ token",
+        "description": "ใช้ refresh token เพื่อขอ access token ใหม่\n\n- ตรวจสอบว่า refresh token ยัง valid\n- ออก access + refresh token ใหม่ทั้งคู่ (token rotation)",
+        "operationId": "refresh_token_auth_refresh_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "ดูข้อมูลผู้ใช้ปัจจุบัน",
+        "description": "ดึงข้อมูล user ที่ login อยู่",
+        "operationId": "get_me_auth_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/profile/me": {
+      "get": {
+        "tags": [
+          "Profile"
+        ],
+        "summary": "ดูข้อมูลโปรไฟล์ตัวเอง",
+        "description": "ดึงข้อมูลโปรไฟล์ของ user ที่ login อยู่ พร้อม presigned URL ของรูปโปรไฟล์",
+        "operationId": "get_my_profile_profile_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Profile"
+        ],
+        "summary": "แก้ไขข้อมูลโปรไฟล์",
+        "description": "อัปเดต full_name และ bio ของ user ที่ login อยู่",
+        "operationId": "update_my_profile_profile_me_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/profile/me/avatar": {
+      "post": {
+        "tags": [
+          "Profile"
+        ],
+        "summary": "อัปโหลดรูปโปรไฟล์ (ไฟล์รูป)",
+        "description": "อัปโหลดรูปโปรไฟล์ไป MinIO\n\n- รองรับ: JPEG, PNG, GIF, WebP\n- ขนาดไม่เกิน 5MB\n- ลบรูปเก่าอัตโนมัติ",
+        "operationId": "upload_my_avatar_profile_me_avatar_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_my_avatar_profile_me_avatar_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvatarResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Profile"
+        ],
+        "summary": "ลบรูปโปรไฟล์",
+        "description": "ลบรูปโปรไฟล์จาก MinIO และ clear ข้อมูลใน DB",
+        "operationId": "delete_my_avatar_profile_me_avatar_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvatarDeleteResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/profile/me/avatar-url": {
+      "post": {
+        "tags": [
+          "Profile"
+        ],
+        "summary": "ตั้งรูปโปรไฟล์จาก URL (ลิงก์ MinIO)",
+        "description": "ตั้งรูปโปรไฟล์โดยใส่ object name ที่เก็บใน MinIO\n\nเช่น ถ้ามีรูปอยู่ใน MinIO แล้ว สามารถใส่ object_name เช่น\n`avatars/my-photo.jpg` เพื่อตั้งเป็นรูปโปรไฟล์ได้เลย",
+        "operationId": "set_avatar_from_url_profile_me_avatar_url_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "object_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Object Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvatarResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/storage/buckets": {
+      "get": {
+        "tags": [
+          "MinIO Object Storage"
+        ],
+        "summary": "เรียกดูรายการ Bucket ทั้งหมดใน MinIO Storage",
+        "description": "ดึงรายการ Buckets ทั้งหมดที่มีอยู่ใน MinIO Object Storage",
+        "operationId": "list_minio_buckets_storage_buckets_get",
+        "responses": {
+          "200": {
+            "description": "คืนค่ารายชื่อ Bucket และวันที่สร้าง",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BucketItem"
+                  },
+                  "type": "array",
+                  "title": "Response List Minio Buckets Storage Buckets Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/storage/objects": {
+      "get": {
+        "tags": [
+          "MinIO Object Storage"
+        ],
+        "summary": "เรียกดูรายการไฟล์ใน Bucket (List Objects)",
+        "description": "เรียกดูรายชื่อวัตถุ/ไฟล์ทั้งหมดใน Bucket ที่ระบุ",
+        "operationId": "list_bucket_objects_storage_objects_get",
+        "parameters": [
+          {
+            "name": "bucket_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ชื่อ Bucket ที่ต้องการค้นหา",
+              "title": "Bucket Name"
+            },
+            "description": "ชื่อ Bucket ที่ต้องการค้นหา"
+          },
+          {
+            "name": "prefix",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Prefix เส้นทางโฟลเดอร์ (ถ้ามี)",
+              "title": "Prefix"
+            },
+            "description": "Prefix เส้นทางโฟลเดอร์ (ถ้ามี)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ObjectItem"
+                  },
+                  "title": "Response List Bucket Objects Storage Objects Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/storage/presigned-url": {
+      "post": {
+        "tags": [
+          "MinIO Object Storage"
+        ],
+        "summary": "สร้าง Presigned URL สำหรับดาวน์โหลดไฟล์แบบจำกัดเวลา",
+        "description": "สร้างลิงก์ดาวน์โหลดไฟล์ชั่วคราวผ่าน MinIO Presigned GET Object API",
+        "operationId": "generate_object_presigned_url_storage_presigned_url_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresignedUrlRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresignedUrlResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/cache": {
+      "post": {
+        "tags": [
+          "Redis Cache & ARQ Tasks"
+        ],
+        "summary": "บันทึกข้อมูลเข้า Redis Cache (Set Key-Value with TTL)",
+        "description": "บันทึกข้อมูล Key-Value ลงใน Redis Cache พร้อมกำหนดเวลาหมดอายุ (TTL)",
+        "operationId": "set_redis_cache_tasks_cache_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CacheSetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/cache/{key}": {
+      "get": {
+        "tags": [
+          "Redis Cache & ARQ Tasks"
+        ],
+        "summary": "ดึงข้อมูลจาก Redis Cache (Get Key-Value)",
+        "description": "อ่านข้อมูลจาก Redis Cache ตาม Key ที่ระบุ",
+        "operationId": "get_redis_cache_tasks_cache__key__get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/enqueue": {
+      "post": {
+        "tags": [
+          "Redis Cache & ARQ Tasks"
+        ],
+        "summary": "ส่งงานเข้าคิวประมวลผลเบื้องหลัง (Enqueue ARQ Task)",
+        "description": "ส่งคำสั่งเข้าคิวงานเบื้องหลัง (ARQ Task Queue) เพื่อให้ Background Worker ดึงไปประมวลผลแบบ Asynchronous",
+        "operationId": "enqueue_background_task_tasks_enqueue_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnqueueTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnqueueTaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/annotation/projects": {
+      "get": {
+        "tags": [
+          "Label Studio Annotation"
+        ],
+        "summary": "เรียกดูรายการโครงการทั้งหมดใน Label Studio (List Projects)",
+        "description": "ดึงรายชื่อโครงการทั้งหมดที่ลงทะเบียนไว้ในระบบ Label Studio",
+        "operationId": "list_annotation_projects_annotation_projects_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LabelStudioProject"
+                  },
+                  "type": "array",
+                  "title": "Response List Annotation Projects Annotation Projects Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/annotation/projects/{project_id}/tasks": {
+      "get": {
+        "tags": [
+          "Label Studio Annotation"
+        ],
+        "summary": "เรียกดูรายการ Task ข้อมูลในโครงการ Label Studio (List Tasks)",
+        "description": "ดึงรายการข้อมูล (Tasks) ภายในโครงการ Label Studio ที่ระบุ",
+        "operationId": "list_project_tasks_annotation_projects__project_id__tasks_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "จำนวนรายการสูงสุดที่ดึงกลับมา",
+              "default": 10,
+              "title": "Limit"
+            },
+            "description": "จำนวนรายการสูงสุดที่ดึงกลับมา"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LabelStudioTask"
+                  },
+                  "title": "Response List Project Tasks Annotation Projects  Project Id  Tasks Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Root Health Endpoint",
+        "description": "Health check endpoint ระดับรากของเซิร์ฟเวอร์",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AvatarDeleteResponse": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "AvatarDeleteResponse",
+        "description": "ผลลัพธ์หลังลบรูปโปรไฟล์"
+      },
+      "AvatarResponse": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "profile_image_url": {
+            "type": "string",
+            "title": "Profile Image Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message",
+          "profile_image_url"
+        ],
+        "title": "AvatarResponse",
+        "description": "ผลลัพธ์หลังอัปโหลดรูปโปรไฟล์"
+      },
+      "Body_upload_my_avatar_profile_me_avatar_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "description": "ไฟล์รูปโปรไฟล์ (JPEG, PNG, GIF, WebP) สูงสุด 5MB"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_my_avatar_profile_me_avatar_post"
+      },
+      "BucketItem": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "example": "profile-images"
+          },
+          "creation_date": {
+            "type": "string",
+            "title": "Creation Date",
+            "example": "2026-08-13T12:00:00Z"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "creation_date"
+        ],
+        "title": "BucketItem"
+      },
+      "CacheResponse": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "is_cached": {
+            "type": "boolean",
+            "title": "Is Cached"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "value",
+          "is_cached"
+        ],
+        "title": "CacheResponse"
+      },
+      "CacheSetRequest": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "example": "system:config:theme"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value",
+            "example": "dark"
+          },
+          "ttl_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttl Seconds",
+            "description": "เวลาหมดอายุของข้อมูล (วินาที)",
+            "default": 300
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "value"
+        ],
+        "title": "CacheSetRequest"
+      },
+      "ComponentStatus": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "example": "PostgreSQL"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "example": "online"
+          },
+          "details": {
+            "type": "string",
+            "title": "Details",
+            "example": "Connected successfully"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "status",
+          "details"
+        ],
+        "title": "ComponentStatus"
+      },
+      "EnqueueTaskRequest": {
+        "properties": {
+          "job_name": {
+            "type": "string",
+            "title": "Job Name",
+            "default": "simple_work",
+            "example": "simple_work"
+          },
+          "job_data": {
+            "type": "string",
+            "title": "Job Data",
+            "example": "Processing Dataset Batch #102"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_data"
+        ],
+        "title": "EnqueueTaskRequest"
+      },
+      "EnqueueTaskResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status",
+          "message"
+        ],
+        "title": "EnqueueTaskResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "LabelStudioProject": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id",
+            "example": 1
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "example": "Customer Sentiment Analysis"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "example": "Text classification project"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title"
+        ],
+        "title": "LabelStudioProject"
+      },
+      "LabelStudioTask": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id",
+            "example": 101
+          },
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id",
+            "example": 1
+          },
+          "data": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "data"
+        ],
+        "title": "LabelStudioTask"
+      },
+      "LoginRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "description": "เข้าสู่ระบบ"
+      },
+      "MessageResponse": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "MessageResponse",
+        "description": "Generic message response"
+      },
+      "ObjectItem": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "example": "avatars/user-123.jpg"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size",
+            "example": 102400
+          },
+          "last_modified": {
+            "type": "string",
+            "title": "Last Modified"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "size",
+          "last_modified"
+        ],
+        "title": "ObjectItem"
+      },
+      "PresignedUrlRequest": {
+        "properties": {
+          "bucket_name": {
+            "type": "string",
+            "title": "Bucket Name",
+            "example": "profile-images"
+          },
+          "object_name": {
+            "type": "string",
+            "title": "Object Name",
+            "example": "avatars/user-123.jpg"
+          },
+          "expires_hours": {
+            "type": "integer",
+            "maximum": 24.0,
+            "minimum": 1.0,
+            "title": "Expires Hours",
+            "description": "จำนวนชั่วโมงที่ URL สามารถใช้งานได้",
+            "default": 1
+          }
+        },
+        "type": "object",
+        "required": [
+          "bucket_name",
+          "object_name"
+        ],
+        "title": "PresignedUrlRequest"
+      },
+      "PresignedUrlResponse": {
+        "properties": {
+          "bucket_name": {
+            "type": "string",
+            "title": "Bucket Name"
+          },
+          "object_name": {
+            "type": "string",
+            "title": "Object Name"
+          },
+          "presigned_url": {
+            "type": "string",
+            "title": "Presigned Url"
+          },
+          "expires_in_hours": {
+            "type": "integer",
+            "title": "Expires In Hours"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bucket_name",
+          "object_name",
+          "presigned_url",
+          "expires_in_hours"
+        ],
+        "title": "PresignedUrlResponse"
+      },
+      "RefreshTokenRequest": {
+        "properties": {
+          "refresh_token": {
+            "type": "string",
+            "title": "Refresh Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "refresh_token"
+        ],
+        "title": "RefreshTokenRequest",
+        "description": "ต่ออายุ token"
+      },
+      "SignUpRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "username": {
+            "type": "string",
+            "maxLength": 50,
+            "minLength": 3,
+            "pattern": "^[a-zA-Z0-9_]+$",
+            "title": "Username"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Password"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "username",
+          "password"
+        ],
+        "title": "SignUpRequest",
+        "description": "สมัครสมาชิกใหม่"
+      },
+      "SystemHealthResponse": {
+        "properties": {
+          "overall_status": {
+            "type": "string",
+            "title": "Overall Status",
+            "example": "healthy"
+          },
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/ComponentStatus"
+            },
+            "type": "array",
+            "title": "Components"
+          }
+        },
+        "type": "object",
+        "required": [
+          "overall_status",
+          "components"
+        ],
+        "title": "SystemHealthResponse"
+      },
+      "TokenResponse": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token"
+          },
+          "refresh_token": {
+            "type": "string",
+            "title": "Refresh Token"
+          },
+          "token_type": {
+            "type": "string",
+            "title": "Token Type",
+            "default": "bearer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token",
+          "refresh_token"
+        ],
+        "title": "TokenResponse",
+        "description": "Token pair ที่ได้หลัง login / refresh"
+      },
+      "UpdateProfileRequest": {
+        "properties": {
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          }
+        },
+        "type": "object",
+        "title": "UpdateProfileRequest",
+        "description": "อัปเดตข้อมูลโปรไฟล์"
+      },
+      "UserResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
+          "profile_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Image Url"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "username",
+          "is_active",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "UserResponse",
+        "description": "ข้อมูลผู้ใช้ (ไม่รวม password)"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Health",
+      "description": "API สำหรับตรวจสอบสถานะเบื้องต้นของแอปพลิเคชัน (Health Check)"
+    },
+    {
+      "name": "System & Infrastructure",
+      "description": "API สำหรับตรวจสอบสถานะการเชื่อมต่อบริการทั้งหมดในระบบ (PostgreSQL, MinIO, Redis, Label Studio)"
+    },
+    {
+      "name": "Authentication",
+      "description": "ระบบยืนยันตัวตน สมาชิก Sign-up, Login ออกแบบในรูปแบบ Stateless JWT Bearer Token Pair พร้อม Token Rotation"
+    },
+    {
+      "name": "Profile",
+      "description": "ระบบจัดการโปรไฟล์ผู้ใช้งาน อัปโหลดและจัดการรูปภาพโปรไฟล์ผ่าน MinIO S3 Object Storage"
+    },
+    {
+      "name": "MinIO Object Storage",
+      "description": "บริการจัดการไฟล์วัตถุ (Object Storage) การเรียกดู Bucket, รายการไฟล์ และการสร้าง Presigned Download URL"
+    },
+    {
+      "name": "Redis Cache & ARQ Tasks",
+      "description": "บริการจัดเก็บข้อมูลชั่วคราว (Key-Value Cache) และระบบคิวงานประมวลผลเบื้องหลังแบบ Asynchronous (ARQ Queue)"
+    },
+    {
+      "name": "Label Studio Annotation",
+      "description": "บริการเชื่อมต่อกับแพลตฟอร์มติดฉลากข้อมูล AI/ML (Data Labeling & Annotation Platform)"
+    }
+  ]
+}

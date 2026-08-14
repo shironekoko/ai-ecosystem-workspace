@@ -1,0 +1,21 @@
+﻿Tag/Group,Method,Path Endpoint,Summary,Description,Parameters,Has Request Body,Response Codes
+Authentication,POST,/auth/login,เข้าสู่ระบบ,ตรวจสอบ email + password แล้วออก JWT token pair  - Access token (30 นาที) - Refresh token (7 วัน),-,Yes,"200, 422"
+Authentication,POST,/auth/logout,ออกจากระบบ,ออกจากระบบ — client ควรลบ token ออกจาก storage  (Stateless JWT: ฝั่ง server ไม่ได้ blacklist token แต่ยืนยันว่า token ยัง valid ก่อนตอบ),-,No,200
+Authentication,GET,/auth/me,ดูข้อมูลผู้ใช้ปัจจุบัน,ดึงข้อมูล user ที่ login อยู่,-,No,200
+Authentication,POST,/auth/refresh,ต่ออายุ token,ใช้ refresh token เพื่อขอ access token ใหม่  - ตรวจสอบว่า refresh token ยัง valid - ออก access + refresh token ใหม่ทั้งคู่ (token rotation),-,Yes,"200, 422"
+Authentication,POST,/auth/signup,สมัครสมาชิกใหม่,สร้างบัญชีผู้ใช้ใหม่  - ตรวจสอบ email / username ซ้ำ - Hash password ด้วย bcrypt - บันทึกลง PostgreSQL,-,Yes,"201, 422"
+Health,GET,/,Root Health Endpoint,Health check endpoint ระดับรากของเซิร์ฟเวอร์,-,No,200
+Label Studio Annotation,GET,/annotation/projects,เรียกดูรายการโครงการทั้งหมดใน Label Studio (List Projects),ดึงรายชื่อโครงการทั้งหมดที่ลงทะเบียนไว้ในระบบ Label Studio,-,No,200
+Label Studio Annotation,GET,/annotation/projects/{project_id}/tasks,เรียกดูรายการ Task ข้อมูลในโครงการ Label Studio (List Tasks),ดึงรายการข้อมูล (Tasks) ภายในโครงการ Label Studio ที่ระบุ,"project_id (path, Required); limit (query, Optional)",No,"200, 422"
+MinIO Object Storage,GET,/storage/buckets,เรียกดูรายการ Bucket ทั้งหมดใน MinIO Storage,ดึงรายการ Buckets ทั้งหมดที่มีอยู่ใน MinIO Object Storage,-,No,200
+MinIO Object Storage,GET,/storage/objects,เรียกดูรายการไฟล์ใน Bucket (List Objects),เรียกดูรายชื่อวัตถุ/ไฟล์ทั้งหมดใน Bucket ที่ระบุ,"bucket_name (query, Required); prefix (query, Optional)",No,"200, 422"
+MinIO Object Storage,POST,/storage/presigned-url,สร้าง Presigned URL สำหรับดาวน์โหลดไฟล์แบบจำกัดเวลา,สร้างลิงก์ดาวน์โหลดไฟล์ชั่วคราวผ่าน MinIO Presigned GET Object API,-,Yes,"200, 422"
+Profile,GET,/profile/me,ดูข้อมูลโปรไฟล์ตัวเอง,ดึงข้อมูลโปรไฟล์ของ user ที่ login อยู่ พร้อม presigned URL ของรูปโปรไฟล์,-,No,200
+Profile,PUT,/profile/me,แก้ไขข้อมูลโปรไฟล์,อัปเดต full_name และ bio ของ user ที่ login อยู่,-,Yes,"200, 422"
+Profile,DELETE,/profile/me/avatar,ลบรูปโปรไฟล์,ลบรูปโปรไฟล์จาก MinIO และ clear ข้อมูลใน DB,-,No,200
+Profile,POST,/profile/me/avatar,อัปโหลดรูปโปรไฟล์ (ไฟล์รูป),"อัปโหลดรูปโปรไฟล์ไป MinIO  - รองรับ: JPEG, PNG, GIF, WebP - ขนาดไม่เกิน 5MB - ลบรูปเก่าอัตโนมัติ",-,Yes,"200, 422"
+Profile,POST,/profile/me/avatar-url,ตั้งรูปโปรไฟล์จาก URL (ลิงก์ MinIO),ตั้งรูปโปรไฟล์โดยใส่ object name ที่เก็บใน MinIO  เช่น ถ้ามีรูปอยู่ใน MinIO แล้ว สามารถใส่ object_name เช่น `avatars/my-photo.jpg` เพื่อตั้งเป็นรูปโปรไฟล์ได้เลย,"object_name (query, Required)",No,"200, 422"
+Redis Cache & ARQ Tasks,POST,/tasks/cache,บันทึกข้อมูลเข้า Redis Cache (Set Key-Value with TTL),บันทึกข้อมูล Key-Value ลงใน Redis Cache พร้อมกำหนดเวลาหมดอายุ (TTL),-,Yes,"200, 422"
+Redis Cache & ARQ Tasks,GET,/tasks/cache/{key},ดึงข้อมูลจาก Redis Cache (Get Key-Value),อ่านข้อมูลจาก Redis Cache ตาม Key ที่ระบุ,"key (path, Required)",No,"200, 422"
+Redis Cache & ARQ Tasks,POST,/tasks/enqueue,ส่งงานเข้าคิวประมวลผลเบื้องหลัง (Enqueue ARQ Task),ส่งคำสั่งเข้าคิวงานเบื้องหลัง (ARQ Task Queue) เพื่อให้ Background Worker ดึงไปประมวลผลแบบ Asynchronous,-,Yes,"200, 422"
+System & Infrastructure,GET,/system/health,ตรวจสอบสถานะความพร้อมของบริการทั้งหมด (System Health Check),**การตรวจสอบสถานะการเชื่อมต่อ (Health Check)**: - **PostgreSQL**: ส่งคำสั่ง `SELECT 1` ผ่าน SQLAlchemy - **MinIO**: เรียกคำสั่ง `list_buckets()` เพื่อตรวจสอบ S3 API - **Redis**: สื่อสารคำสั่ง `PING` ผ่าน Redis client - **Label Studio**: ตรวจสอบการเชื่อมต่อ API ของ Label Studio SDK,-,No,200

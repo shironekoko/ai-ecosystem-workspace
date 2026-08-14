@@ -14,7 +14,11 @@ services:
       - postgresql-data:/var/lib/postgresql/data
     ports:
       - "5433:5432"
-
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
   # ----------------------------------------
   # 2. Label Studio Service
   # ----------------------------------------
@@ -33,6 +37,47 @@ services:
       - POSTGRE_PASSWORD=db_password
       - POSTGRE_PORT=5432
       - POSTGRE_HOST=postgres
-
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+# ----------------------------------------
+  # 3. MinIO Service
+  # ----------------------------------------
+  minio:
+    image: minio/minio
+    container_name: my_minio
+    restart: always
+    # คำสั่งรัน Server และเปิดพอร์ต 9001 สำหรับหน้าเว็บ Console UI
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: miniouser
+      MINIO_ROOT_PASSWORD: miniopassword
+    ports:
+      - "9000:9000" # พอร์ตสำหรับ API (โค้ด Python คุยผ่านพอร์ตนี้)
+      - "9001:9001" # พอร์ตสำหรับหน้าเว็บ UI
+    volumes:
+      - minio-data:/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+# ----------------------------------------
+  # 4. Redis Service
+  # ----------------------------------------
+  redis:
+    image: redis:7
+    container_name: my_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 volumes:
   postgresql-data:
+  minio-data:
