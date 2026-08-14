@@ -5,29 +5,20 @@ MinIO Client — ตัวเชื่อมต่อกับ MinIO Object Stor
     from core.minio_client import get_minio_client, upload_file, download_file
 """
 
-import os
-from pathlib import Path
 from datetime import timedelta
 
-from dotenv import load_dotenv
 from minio import Minio
 
-_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
-load_dotenv(_ENV_PATH)
-
-MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-MINIO_ROOT_USER = os.getenv("MINIO_ROOT_USER", "minioadmin")
-MINIO_ROOT_PASSWORD = os.getenv("MINIO_ROOT_PASSWORD", "minioadmin")
-MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
+from core.config import settings
 
 
 def get_minio_client() -> Minio:
     """สร้าง MinIO client สำหรับเชื่อมต่อกับ MinIO server"""
     return Minio(
-        endpoint=MINIO_ENDPOINT,
-        access_key=MINIO_ROOT_USER,
-        secret_key=MINIO_ROOT_PASSWORD,
-        secure=MINIO_SECURE,
+        endpoint=settings.minio_endpoint,
+        access_key=settings.minio_access_key,
+        secret_key=settings.minio_secret_key,
+        secure=settings.minio_secure,
     )
 
 
