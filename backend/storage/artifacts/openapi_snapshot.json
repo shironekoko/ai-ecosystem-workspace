@@ -759,6 +759,133 @@
         }
       }
     },
+    "/training/dataset/download": {
+      "post": {
+        "tags": [
+          "ML Training Pipeline"
+        ],
+        "summary": "ดาวน์โหลด Dataset จาก HuggingFace → เก็บใน MinIO",
+        "description": "ดาวน์โหลด Dataset จาก HuggingFace Hub แล้วบันทึกเป็น Parquet files ใน MinIO\n\n**Bucket ที่ใช้เก็บ:** `datasets/{dataset_name}/{split}.parquet`\n\n**Dataset ที่รองรับ (Token Classification):**\n- `conll2003` — Named Entity Recognition (NER) มาตรฐาน",
+        "operationId": "download_dataset_training_dataset_download_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DownloadDatasetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadDatasetResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/training/enqueue": {
+      "post": {
+        "tags": [
+          "ML Training Pipeline"
+        ],
+        "summary": "เข้าคิวสั่งเทรน Model (Scheduled Queue)",
+        "description": "ส่งคำสั่งเทรน Token Classification Model เข้า ARQ Task Queue พร้อมกำหนดเวลาเริ่มงาน\n\n**การทำงาน:**\n1. รับพารามิเตอร์การเทรน + `scheduled_at` (วันเวลาที่ต้องการให้เริ่ม)\n2. ส่ง Job เข้า Redis Queue ด้วย `_defer_until=scheduled_at`\n3. Trainer Worker จะตรวจสอบ Queue และเริ่มทำงานเมื่อถึงเวลาที่กำหนดเท่านั้น\n\n**Trainer Worker จะทำ:**\n- โหลด Dataset จาก MinIO\n- Tokenize + Align Labels ตาม HuggingFace Chapter 7\n- เทรนด้วย HuggingFace Trainer API (รองรับ GPU)\n- บันทึก Training Log → `training-logs/{job_id}/training_log.json`\n- บันทึก Model → `models/{job_id}/`",
+        "operationId": "enqueue_training_training_enqueue_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnqueueTrainingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnqueueTrainingResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/training/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "ML Training Pipeline"
+        ],
+        "summary": "ตรวจสอบสถานะ Training Job",
+        "description": "ดึงสถานะและผลลัพธ์ของ Training Job จาก ARQ Redis Queue",
+        "operationId": "get_job_status_training_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/": {
       "get": {
         "tags": [
@@ -939,6 +1066,65 @@
         ],
         "title": "ComponentStatus"
       },
+      "DownloadDatasetRequest": {
+        "properties": {
+          "dataset_name": {
+            "type": "string",
+            "title": "Dataset Name",
+            "description": "ชื่อ Dataset บน HuggingFace เช่น 'conll2003'",
+            "default": "conll2003",
+            "examples": [
+              "conll2003"
+            ]
+          },
+          "splits": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Splits",
+            "description": "รายการ Split ที่ต้องการดาวน์โหลด",
+            "default": [
+              "train",
+              "validation",
+              "test"
+            ]
+          }
+        },
+        "type": "object",
+        "title": "DownloadDatasetRequest"
+      },
+      "DownloadDatasetResponse": {
+        "properties": {
+          "dataset_name": {
+            "type": "string",
+            "title": "Dataset Name"
+          },
+          "splits_uploaded": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Splits Uploaded"
+          },
+          "bucket": {
+            "type": "string",
+            "title": "Bucket"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataset_name",
+          "splits_uploaded",
+          "bucket",
+          "message"
+        ],
+        "title": "DownloadDatasetResponse"
+      },
       "EnqueueTaskRequest": {
         "properties": {
           "job_name": {
@@ -982,6 +1168,101 @@
         ],
         "title": "EnqueueTaskResponse"
       },
+      "EnqueueTrainingRequest": {
+        "properties": {
+          "dataset_name": {
+            "type": "string",
+            "title": "Dataset Name",
+            "description": "ชื่อ Dataset ที่เก็บใน MinIO",
+            "default": "conll2003",
+            "examples": [
+              "conll2003"
+            ]
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "description": "ชื่อ Pre-trained Model จาก HuggingFace",
+            "default": "distilbert-base-uncased",
+            "examples": [
+              "distilbert-base-uncased",
+              "bert-base-cased"
+            ]
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Scheduled At",
+            "description": "วันเวลาที่ต้องการให้ Worker เริ่มเทรน (ISO 8601 format)",
+            "examples": [
+              "2025-01-01T10:30:00+07:00"
+            ]
+          },
+          "num_epochs": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Num Epochs",
+            "description": "จำนวน Epoch (1-10)",
+            "default": 3
+          },
+          "learning_rate": {
+            "type": "number",
+            "maximum": 0.001,
+            "minimum": 1e-06,
+            "title": "Learning Rate",
+            "description": "Learning Rate",
+            "default": 2e-05,
+            "examples": [
+              2e-05
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "scheduled_at"
+        ],
+        "title": "EnqueueTrainingRequest"
+      },
+      "EnqueueTrainingResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "dataset_name": {
+            "type": "string",
+            "title": "Dataset Name"
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Scheduled At"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status",
+          "dataset_name",
+          "model_name",
+          "scheduled_at",
+          "message"
+        ],
+        "title": "EnqueueTrainingResponse"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -994,6 +1275,72 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "JobStatusResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "enqueue_time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enqueue Time"
+          },
+          "start_time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Time"
+          },
+          "finish_time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finish Time"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "JobStatusResponse"
       },
       "LabelStudioProject": {
         "properties": {
@@ -1452,6 +1799,10 @@
     {
       "name": "Label Studio Annotation",
       "description": "บริการเชื่อมต่อกับแพลตฟอร์มติดฉลากข้อมูล AI/ML (Data Labeling & Annotation Platform)"
+    },
+    {
+      "name": "ML Training Pipeline",
+      "description": "ระบบ ML Training Pipeline — ดาวน์โหลด Dataset จาก HuggingFace, จัดเก็บใน MinIO และสั่งเทรน Token Classification Model แบบ Scheduled Queue ผ่าน ARQ + Redis"
     }
   ]
 }

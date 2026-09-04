@@ -1,0 +1,20 @@
+# ─────────────────────────────────────────────
+# Trainer Worker Python Dependencies
+# ─────────────────────────────────────────────
+# หมายเหตุ: torch ไม่ต้องใส่เพราะ Base Image (pytorch/pytorch) มีให้แล้ว
+
+# ── HuggingFace Ecosystem ──
+transformers>=4.40.0,<4.45.0   # Model + Tokenizer (รองรับ PyTorch 2.3.0)
+datasets>=2.19.0           # Load / Process Dataset
+evaluate>=0.4.0            # Compute Metrics
+seqeval>=1.2.2             # NER Evaluation Metrics (F1, Precision, Recall)
+accelerate>=0.29.0         # ช่วย HuggingFace Trainer ใช้ GPU ได้ดีขึ้น
+
+# ── Storage ──
+minio>=7.2.0               # MinIO Python SDK (Upload/Download)
+
+# ── Task Queue ──
+arq>=0.28.0                # Async Redis Queue (Worker Side)
+
+# ── Utilities ──
+numpy>=1.26.0

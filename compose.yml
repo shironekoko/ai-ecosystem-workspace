@@ -78,6 +78,60 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+  # ----------------------------------------
+  # 5. FastAPI Backend (build จาก Dockerfile)
+  # ----------------------------------------
+  fastapi:
+    build:
+      context: ./backend      # โฟลเดอร์ที่มี Dockerfile
+      dockerfile: Dockerfile
+    container_name: my_fastapi
+    restart: always
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env.docker  # ใช้ hostname ของ Docker service แทน localhost
+    depends_on:
+      - postgres
+      - redis
+      - minio
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  # ----------------------------------------
+  # 6. Trainer Worker (GPU + build จาก Dockerfile)
+  # ----------------------------------------
+  trainer-worker:
+    build:
+      context: ./trainer       # โฟลเดอร์ที่มี Dockerfile ของ Trainer
+      dockerfile: Dockerfile
+    container_name: my_trainer
+    restart: unless-stopped    # ไม่ restart ถ้าหยุดด้วยตัวเอง (หลังเทรนเสร็จ)
+    env_file:
+      - ./backend/.env.docker  # ใช้ env เดียวกันกับ FastAPI
+    depends_on:
+      - redis
+      - minio
+    # ── GPU Resource Reservation ──
+    # Flag สำหรับให้ Container เข้าถึง NVIDIA GPU ของ Host
+    # ต้องติดตั้ง NVIDIA Container Toolkit บนเครื่อง Host ก่อน
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia   # ใช้ NVIDIA GPU Driver
+              count: 1         # จำนวน GPU ที่ขอใช้
+              capabilities: [gpu]  # บอกว่าต้องการ GPU capability
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 volumes:
   postgresql-data:
   minio-data:
+  models:
+  datasets:
+  training-logs:

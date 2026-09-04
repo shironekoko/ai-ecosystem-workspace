@@ -26,6 +26,8 @@ from app.features.system.router import router as system_router
 from app.features.storage.router import router as storage_router
 from app.features.tasks.router import router as tasks_router
 from app.features.annotation.router import router as annotation_router
+from app.features.training.router import router as training_router
+
 
 
 @asynccontextmanager
@@ -84,6 +86,13 @@ tags_metadata = [
         "name": "Label Studio Annotation",
         "description": "บริการเชื่อมต่อกับแพลตฟอร์มติดฉลากข้อมูล AI/ML (Data Labeling & Annotation Platform)",
     },
+    {
+        "name": "ML Training Pipeline",
+        "description": (
+            "ระบบ ML Training Pipeline — ดาวน์โหลด Dataset จาก HuggingFace, "
+            "จัดเก็บใน MinIO และสั่งเทรน Token Classification Model แบบ Scheduled Queue ผ่าน ARQ + Redis"
+        ),
+    },
 ]
 
 # ── สร้าง FastAPI app พร้อม Metadata ครบถ้วน ──
@@ -134,6 +143,7 @@ app.include_router(profile_router)
 app.include_router(storage_router)
 app.include_router(tasks_router)
 app.include_router(annotation_router)
+app.include_router(training_router)
 
 
 # ── Root Health Check ──
