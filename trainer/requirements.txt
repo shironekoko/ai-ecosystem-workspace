@@ -16,5 +16,10 @@ minio>=7.2.0               # MinIO Python SDK (Upload/Download)
 # ── Task Queue ──
 arq>=0.28.0                # Async Redis Queue (Worker Side)
 
+# ── MLflow Integration ──
+mlflow>=2.14.0,<2.16.0     # Experiment Tracking + Model Registry
+boto3>=1.34.0              # MLflow ใช้ boto3 เชื่อม MinIO ผ่าน S3 Protocol
+psycopg2-binary>=2.9.0     # MLflow Backend Store (PostgreSQL)
+
 # ── Utilities ──
 numpy>=1.26.0

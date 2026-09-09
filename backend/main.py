@@ -27,6 +27,7 @@ from app.features.storage.router import router as storage_router
 from app.features.tasks.router import router as tasks_router
 from app.features.annotation.router import router as annotation_router
 from app.features.training.router import router as training_router
+from app.features.inference.router import router as inference_router
 
 
 
@@ -93,6 +94,13 @@ tags_metadata = [
             "จัดเก็บใน MinIO และสั่งเทรน Token Classification Model แบบ Scheduled Queue ผ่าน ARQ + Redis"
         ),
     },
+    {
+        "name": "NER Inference",
+        "description": (
+            "ระบบ NER Inference — ส่งข้อความเข้า Queue เพื่อทำ Named Entity Recognition "
+            "โดย Inference Worker โหลด Trained Model จาก MLflow Model Registry"
+        ),
+    },
 ]
 
 # ── สร้าง FastAPI app พร้อม Metadata ครบถ้วน ──
@@ -144,6 +152,7 @@ app.include_router(storage_router)
 app.include_router(tasks_router)
 app.include_router(annotation_router)
 app.include_router(training_router)
+app.include_router(inference_router)
 
 
 # ── Root Health Check ──

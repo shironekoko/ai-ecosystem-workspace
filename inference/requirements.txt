@@ -1,0 +1,21 @@
+# ─────────────────────────────────────────────
+# Inference Worker Python Dependencies
+# ─────────────────────────────────────────────
+
+# ── PyTorch CPU Only (ขนาดเล็กกว่า GPU version มาก) ──
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.3.0
+
+# ── HuggingFace Ecosystem ──
+transformers>=4.40.0,<4.45.0   # Model + Tokenizer (ต้องตรงกับ Trainer)
+
+# ── MLflow ──
+mlflow>=2.14.0,<2.16.0         # โหลด Model จาก MLflow Model Registry
+boto3>=1.34.0                  # MLflow ใช้ boto3 เชื่อม MinIO ผ่าน S3
+
+# ── Task Queue ──
+arq>=0.28.0                    # Async Redis Queue (Worker Side)
+
+# ── Utilities ──
+numpy>=1.26.0
+setuptools>=70.0.0             # ให้ pkg_resources ใช้งานได้ใน Python 3.12

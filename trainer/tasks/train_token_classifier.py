@@ -1,5 +1,5 @@
 """
-Token Classification Training Task (ARQ Job)
+Token Classification Training Task (ARQ Job) + MLflow Integration
 อ้างอิงจาก: https://huggingface.co/learn/llm-course/en/chapter7/2
 
 Flow การทำงาน:
@@ -7,8 +7,9 @@ Flow การทำงาน:
 2. Load Tokenizer + Model (distilbert-base-uncased)
 3. Tokenize + Align Labels กับ Subwords
 4. เทรนด้วย HuggingFace Trainer API
-5. บันทึก Training Log → MinIO
-6. บันทึก Model → MinIO
+5. บันทึก Training Metrics → MLflow Tracking
+6. บันทึก Model → MLflow Model Registry
+7. บันทึก Training Log → MinIO (backup)
 """
 
 import json
@@ -21,6 +22,8 @@ from pathlib import Path
 import numpy as np
 import evaluate
 import datasets as hf_datasets
+import mlflow
+import mlflow.transformers
 from transformers import (
     AutoTokenizer,
     AutoModelForTokenClassification,
@@ -76,6 +79,18 @@ class TrainingLogCallback(TrainerCallback):
             })
         self.epoch_logs.append(log_entry)
         logger.info(f"📊 Epoch {state.epoch:.0f} completed: {log_entry}")
+
+
+class MLflowLoggingCallback(TrainerCallback):
+    """Callback สำหรับ Log Metrics ไป MLflow ทุก Epoch"""
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        """ส่ง metrics ไป MLflow ทุกครั้งที่ Trainer log"""
+        if logs and mlflow.active_run():
+            step = state.global_step
+            for key, value in logs.items():
+                if isinstance(value, (int, float)):
+                    mlflow.log_metric(key, value, step=step)
 
 
 def tokenize_and_align_labels(examples: dict, tokenizer, label_all_tokens: bool = False) -> dict:
@@ -170,7 +185,7 @@ async def train_token_classifier(
     learning_rate: float,
 ) -> dict:
     """
-    ARQ Job Function: เทรน Token Classification Model
+    ARQ Job Function: เทรน Token Classification Model + บันทึกผลลง MLflow
 
     Args:
         ctx: ARQ context (ส่งจาก Worker)
@@ -192,6 +207,12 @@ async def train_token_classifier(
     import torch
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"   Device:  {device.upper()}")
+
+    # ── Setup MLflow Tracking ──
+    mlflow_tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+    mlflow.set_tracking_uri(mlflow_tracking_uri)
+    mlflow.set_experiment("token-classification")
+    logger.info(f"   MLflow:  {mlflow_tracking_uri}")
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
@@ -218,14 +239,10 @@ async def train_token_classifier(
         logger.info(f"✅ Dataset loaded: {raw_dataset}")
 
         # ดึง Label Names จาก Dataset feature (ถ้าเป็น ClassLabel) หรือใช้ค่า default
-        # หมายเหตุ: เมื่อ load จาก Parquet features["ner_tags"].feature อาจเป็น
-        #   - ClassLabel (มี .names) ← กรณี dataset มี metadata ครบ
-        #   - Value('int64')         ← กรณี Parquet สูญเสีย ClassLabel metadata
-        #     → ใช้ CONLL2003_LABEL_NAMES เป็น fallback
         try:
             from datasets import ClassLabel
             ner_feature = raw_dataset["train"].features.get("ner_tags")
-            inner = getattr(ner_feature, "feature", None)   # Sequence → .feature
+            inner = getattr(ner_feature, "feature", None)
             if isinstance(inner, ClassLabel):
                 label_names = inner.names
             else:
@@ -234,112 +251,175 @@ async def train_token_classifier(
             label_names = CONLL2003_LABEL_NAMES
         logger.info(f"   Labels ({len(label_names)}): {label_names}")
 
+        # ════════════════════════════════════════
+        # MLflow Run — เปิด Run แล้วทำทุกอย่างภายใน
+        # ════════════════════════════════════════
+        with mlflow.start_run(run_name=f"job-{job_id[:8]}") as run:
+            mlflow_run_id = run.info.run_id
+            logger.info(f"📊 MLflow Run started: {mlflow_run_id}")
 
-        # ────────────────────────────────────────
-        # Step 2: Load Tokenizer + Model
-        # ────────────────────────────────────────
-        logger.info(f"🤖 [Step 2] Loading model '{model_name}'...")
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForTokenClassification.from_pretrained(
-            model_name,
-            num_labels=len(label_names),
-            id2label={i: label for i, label in enumerate(label_names)},
-            label2id={label: i for i, label in enumerate(label_names)},
-        )
-        logger.info(f"✅ Model loaded: {model_name} ({model.num_parameters():,} params)")
+            # ── Log Parameters (Hyperparameters) ──
+            mlflow.log_params({
+                "job_id": job_id,
+                "dataset_name": dataset_name,
+                "model_name": model_name,
+                "num_epochs": num_epochs,
+                "learning_rate": learning_rate,
+                "device": device,
+                "label_count": len(label_names),
+            })
 
-        # ────────────────────────────────────────
-        # Step 3: Tokenize + Align Labels
-        # ────────────────────────────────────────
-        logger.info("🔤 [Step 3] Tokenizing dataset and aligning labels...")
-        tokenized_dataset = raw_dataset.map(
-            lambda examples: tokenize_and_align_labels(examples, tokenizer),
-            batched=True,
-            remove_columns=raw_dataset["train"].column_names,
-        )
-        logger.info(f"✅ Tokenization complete: {tokenized_dataset}")
+            # ────────────────────────────────────────
+            # Step 2: Load Tokenizer + Model
+            # ────────────────────────────────────────
+            logger.info(f"🤖 [Step 2] Loading model '{model_name}'...")
+            tokenizer = AutoTokenizer.from_pretrained(model_name)
+            model = AutoModelForTokenClassification.from_pretrained(
+                model_name,
+                num_labels=len(label_names),
+                id2label={i: label for i, label in enumerate(label_names)},
+                label2id={label: i for i, label in enumerate(label_names)},
+            )
+            logger.info(f"✅ Model loaded: {model_name} ({model.num_parameters():,} params)")
+            mlflow.log_param("total_params", model.num_parameters())
 
-        # ────────────────────────────────────────
-        # Step 4: Setup Training
-        # ────────────────────────────────────────
-        logger.info("⚙️  [Step 4] Setting up TrainingArguments...")
-        data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
-        log_callback = TrainingLogCallback()
+            # ────────────────────────────────────────
+            # Step 3: Tokenize + Align Labels
+            # ────────────────────────────────────────
+            logger.info("🔤 [Step 3] Tokenizing dataset and aligning labels...")
+            tokenized_dataset = raw_dataset.map(
+                lambda examples: tokenize_and_align_labels(examples, tokenizer),
+                batched=True,
+                remove_columns=raw_dataset["train"].column_names,
+            )
+            logger.info(f"✅ Tokenization complete: {tokenized_dataset}")
 
-        training_args = TrainingArguments(
-            output_dir=str(model_output_dir),
-            num_train_epochs=num_epochs,
-            learning_rate=learning_rate,
-            per_device_train_batch_size=16,
-            per_device_eval_batch_size=16,
-            weight_decay=0.01,
-            evaluation_strategy="epoch",
-            save_strategy="epoch",
-            load_best_model_at_end=True,
-            metric_for_best_model="f1",
-            push_to_hub=False,
-            logging_strategy="epoch",
-            report_to="none",   # ปิด WandB / TensorBoard
-            no_cuda=(device == "cpu"),
-        )
+            # ────────────────────────────────────────
+            # Step 4: Setup Training
+            # ────────────────────────────────────────
+            logger.info("⚙️  [Step 4] Setting up TrainingArguments...")
+            data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
+            log_callback = TrainingLogCallback()
+            mlflow_callback = MLflowLoggingCallback()
 
-        trainer = Trainer(
-            model=model,
-            args=training_args,
-            train_dataset=tokenized_dataset["train"],
-            eval_dataset=tokenized_dataset.get("validation"),
-            tokenizer=tokenizer,
-            data_collator=data_collator,
-            compute_metrics=build_compute_metrics(label_names),
-            callbacks=[log_callback],
-        )
+            training_args = TrainingArguments(
+                output_dir=str(model_output_dir),
+                num_train_epochs=num_epochs,
+                learning_rate=learning_rate,
+                per_device_train_batch_size=16,
+                per_device_eval_batch_size=16,
+                weight_decay=0.01,
+                evaluation_strategy="epoch",
+                save_strategy="epoch",
+                load_best_model_at_end=True,
+                metric_for_best_model="f1",
+                push_to_hub=False,
+                logging_strategy="epoch",
+                report_to="none",   # ปิด WandB / TensorBoard (ใช้ MLflow แทน)
+                no_cuda=(device == "cpu"),
+            )
 
-        # ────────────────────────────────────────
-        # Step 5: เทรน Model
-        # ────────────────────────────────────────
-        logger.info(f"🚀 [Step 5] Starting training ({num_epochs} epochs)...")
-        train_result = trainer.train()
-        logger.info(f"✅ Training complete! Metrics: {train_result.metrics}")
+            trainer = Trainer(
+                model=model,
+                args=training_args,
+                train_dataset=tokenized_dataset["train"],
+                eval_dataset=tokenized_dataset.get("validation"),
+                tokenizer=tokenizer,
+                data_collator=data_collator,
+                compute_metrics=build_compute_metrics(label_names),
+                callbacks=[log_callback, mlflow_callback],
+            )
 
-        # ────────────────────────────────────────
-        # Step 6: บันทึก Training Log → MinIO
-        # ────────────────────────────────────────
-        logger.info("📝 [Step 6] Saving training log...")
-        training_summary = {
-            "job_id": job_id,
-            "dataset_name": dataset_name,
-            "model_name": model_name,
-            "num_epochs": num_epochs,
-            "learning_rate": learning_rate,
-            "device": device,
-            "started_at": started_at,
-            "finished_at": datetime.now(timezone.utc).isoformat(),
-            "train_metrics": train_result.metrics,
-            "epoch_logs": log_callback.epoch_logs,
-            "label_names": label_names,
-            "full_log_history": trainer.state.log_history,
-        }
+            # ────────────────────────────────────────
+            # Step 5: เทรน Model
+            # ────────────────────────────────────────
+            logger.info(f"🚀 [Step 5] Starting training ({num_epochs} epochs)...")
+            train_result = trainer.train()
+            logger.info(f"✅ Training complete! Metrics: {train_result.metrics}")
 
-        with open(log_output_path, "w", encoding="utf-8") as f:
-            json.dump(training_summary, f, ensure_ascii=False, indent=2)
+            # ── Log Final Training Metrics ไป MLflow ──
+            mlflow.log_metrics({
+                "final_train_loss": train_result.metrics.get("train_loss", 0),
+                "train_runtime": train_result.metrics.get("train_runtime", 0),
+                "train_samples_per_second": train_result.metrics.get("train_samples_per_second", 0),
+            })
 
-        log_object = upload_log_to_minio(job_id, str(log_output_path))
+            # ── Evaluate and Log Eval Metrics ──
+            if tokenized_dataset.get("validation"):
+                eval_results = trainer.evaluate()
+                logger.info(f"📈 Eval results: {eval_results}")
+                mlflow.log_metrics({
+                    "eval_loss": eval_results.get("eval_loss", 0),
+                    "eval_f1": eval_results.get("eval_f1", 0),
+                    "eval_precision": eval_results.get("eval_precision", 0),
+                    "eval_recall": eval_results.get("eval_recall", 0),
+                    "eval_accuracy": eval_results.get("eval_accuracy", 0),
+                })
 
-        # ────────────────────────────────────────
-        # Step 7: บันทึก Model → MinIO
-        # ────────────────────────────────────────
-        logger.info("💾 [Step 7] Saving model to MinIO...")
-        trainer.save_model(str(model_output_dir / "final"))
-        tokenizer.save_pretrained(str(model_output_dir / "final"))
+            # ────────────────────────────────────────
+            # Step 6: บันทึก Model → MLflow Model Registry
+            # ────────────────────────────────────────
+            logger.info("📦 [Step 6] Saving model to MLflow Model Registry...")
 
-        model_objects = upload_model_to_minio(job_id, str(model_output_dir / "final"))
+            # บันทึก Model ลง Local ก่อน แล้ว Log เข้า MLflow
+            trainer.save_model(str(model_output_dir / "final"))
+            tokenizer.save_pretrained(str(model_output_dir / "final"))
 
-        result = {
-            "job_id": job_id,
-            "status": "completed",
-            "model_objects": model_objects,
-            "log_object": log_object,
-            "train_metrics": train_result.metrics,
-        }
-        logger.info(f"🎉 [Job {job_id}] Training pipeline finished successfully!")
-        return result
+            # Log model artifacts ไป MLflow
+            mlflow.log_artifacts(str(model_output_dir / "final"), artifact_path="model")
+
+            # ── Register Model ใน MLflow Model Registry ──
+            model_uri = f"runs:/{mlflow_run_id}/model"
+            registered_model = mlflow.register_model(
+                model_uri=model_uri,
+                name="token-classifier",
+            )
+            logger.info(
+                f"✅ Model registered: token-classifier "
+                f"v{registered_model.version}"
+            )
+
+            # ────────────────────────────────────────
+            # Step 7: บันทึก Training Log → MinIO (backup)
+            # ────────────────────────────────────────
+            logger.info("📝 [Step 7] Saving training log...")
+            training_summary = {
+                "job_id": job_id,
+                "mlflow_run_id": mlflow_run_id,
+                "mlflow_model_version": registered_model.version,
+                "dataset_name": dataset_name,
+                "model_name": model_name,
+                "num_epochs": num_epochs,
+                "learning_rate": learning_rate,
+                "device": device,
+                "started_at": started_at,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "train_metrics": train_result.metrics,
+                "epoch_logs": log_callback.epoch_logs,
+                "label_names": label_names,
+                "full_log_history": trainer.state.log_history,
+            }
+
+            with open(log_output_path, "w", encoding="utf-8") as f:
+                json.dump(training_summary, f, ensure_ascii=False, indent=2)
+
+            # Log training_log.json เป็น MLflow Artifact ด้วย
+            mlflow.log_artifact(str(log_output_path))
+
+            # Upload ไป MinIO (backup)
+            log_object = upload_log_to_minio(job_id, str(log_output_path))
+
+            # Upload model ไป MinIO (backup)
+            model_objects = upload_model_to_minio(job_id, str(model_output_dir / "final"))
+
+            result = {
+                "job_id": job_id,
+                "status": "completed",
+                "mlflow_run_id": mlflow_run_id,
+                "mlflow_model_version": registered_model.version,
+                "model_objects": model_objects,
+                "log_object": log_object,
+                "train_metrics": train_result.metrics,
+            }
+            logger.info(f"🎉 [Job {job_id}] Training pipeline finished successfully!")
+            return result

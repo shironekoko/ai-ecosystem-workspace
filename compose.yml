@@ -12,6 +12,7 @@ services:
       POSTGRES_DB: label_studio_db
     volumes:
       - postgresql-data:/var/lib/postgresql/data
+      - ./db-init:/docker-entrypoint-initdb.d   # Init scripts สร้าง mlflow_db อัตโนมัติ
     ports:
       - "5433:5432"
     logging:
@@ -129,9 +130,67 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
+  # ----------------------------------------
+  # 7. MLflow Tracking Server
+  # ----------------------------------------
+  # MLflow ทำหน้าที่:
+  #   - Backend Store (PostgreSQL): เก็บ Experiment metadata, Metrics, Parameters
+  #   - Artifact Store (MinIO/S3): เก็บ Model files, Datasets, Logs
+  #   - Model Registry: จัดการเวอร์ชันโมเดล (staging/production)
+  mlflow:
+    build:
+      context: ./mlflow
+      dockerfile: Dockerfile
+    container_name: my_mlflow
+    restart: always
+    ports:
+      - "5050:5000"       # MLflow UI ที่ http://localhost:5050
+    depends_on:
+      - postgres
+      - minio
+    environment:
+      # MinIO/S3 credentials สำหรับ Artifact Store
+      AWS_ACCESS_KEY_ID: miniouser
+      AWS_SECRET_ACCESS_KEY: miniopassword
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+    # คำสั่งรัน MLflow Server:
+    #   --backend-store-uri → PostgreSQL สำหรับเก็บ Metadata
+    #   --default-artifact-root → MinIO Bucket สำหรับเก็บ Model Artifacts
+    #   --host 0.0.0.0 → เปิดให้เข้าถึงจากภายนอก Container
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://db_user:db_password@postgres:5432/mlflow_db
+      --default-artifact-root s3://mlflow-artifacts/
+      --host 0.0.0.0
+      --port 5000
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  # ----------------------------------------
+  # 8. Inference Worker (CPU — ใช้ Model จาก MLflow)
+  # ----------------------------------------
+  inference-worker:
+    build:
+      context: ./inference       # โฟลเดอร์ที่มี Dockerfile ของ Inference Worker
+      dockerfile: Dockerfile
+    container_name: my_inference
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env.docker   # ใช้ env เดียวกัน (Redis, MinIO, MLflow)
+    depends_on:
+      - redis
+      - mlflow
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 volumes:
   postgresql-data:
   minio-data:
   models:
   datasets:
   training-logs:
+  mlflow-data:
