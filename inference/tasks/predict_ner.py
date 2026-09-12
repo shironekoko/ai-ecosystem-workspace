@@ -23,6 +23,28 @@ from transformers import (
 
 logger = logging.getLogger(__name__)
 
+# ── Observability: OpenTelemetry Tracer ──
+try:
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+    otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317")
+    service_name = os.getenv("OTEL_SERVICE_NAME", "inference-worker")
+
+    resource = Resource.create({"service.name": service_name})
+    provider = TracerProvider(resource=resource)
+    exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
+    provider.add_span_processor(BatchSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+    tracer = trace.get_tracer("ner-inference")
+    logger.info(f"✅ OpenTelemetry tracer initialized for {service_name}")
+except Exception as e:
+    logger.warning(f"⚠️ OpenTelemetry setup warning in worker: {e}")
+    tracer = None
+
 # ── Cache สำหรับเก็บ Model ที่โหลดแล้ว (ไม่ต้องโหลดซ้ำทุก Request) ──
 _model_cache: dict = {}
 
@@ -122,22 +144,47 @@ async def predict_ner(
     logger.info(f"   Model Version: {model_version}")
 
     try:
-        # ── Step 1: โหลด NER Pipeline ──
-        ner_pipeline = _get_ner_pipeline(model_version)
+        if tracer:
+            with tracer.start_as_current_span("ner_predict_job") as span:
+                span.set_attribute("ai.job_id", job_id)
+                span.set_attribute("ai.model_version", model_version)
+                span.set_attribute("ai.text_length", len(text))
 
-        # ── Step 2: Predict ──
-        raw_results = ner_pipeline(text)
+                # ── Step 1: โหลด NER Pipeline ──
+                ner_pipeline = _get_ner_pipeline(model_version)
 
-        # ── Step 3: แปลงผลลัพธ์ ──
-        entities = []
-        for entity in raw_results:
-            entities.append({
-                "entity_group": entity["entity_group"],
-                "word": entity["word"],
-                "score": round(float(entity["score"]), 4),
-                "start": entity["start"],
-                "end": entity["end"],
-            })
+                # ── Step 2: Predict ──
+                raw_results = ner_pipeline(text)
+
+                # ── Step 3: แปลงผลลัพธ์ ──
+                entities = []
+                for entity in raw_results:
+                    entities.append({
+                        "entity_group": entity["entity_group"],
+                        "word": entity["word"],
+                        "score": round(float(entity["score"]), 4),
+                        "start": entity["start"],
+                        "end": entity["end"],
+                    })
+
+                span.set_attribute("ai.entities_count", len(entities))
+        else:
+            # ── Step 1: โหลด NER Pipeline ──
+            ner_pipeline = _get_ner_pipeline(model_version)
+
+            # ── Step 2: Predict ──
+            raw_results = ner_pipeline(text)
+
+            # ── Step 3: แปลงผลลัพธ์ ──
+            entities = []
+            for entity in raw_results:
+                entities.append({
+                    "entity_group": entity["entity_group"],
+                    "word": entity["word"],
+                    "score": round(float(entity["score"]), 4),
+                    "start": entity["start"],
+                    "end": entity["end"],
+                })
 
         result = {
             "job_id": job_id,

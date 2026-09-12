@@ -155,6 +155,44 @@ app.include_router(training_router)
 app.include_router(inference_router)
 
 
+# ── Observability: Prometheus Metrics ──
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+    Instrumentator(
+        should_group_status_codes=True,
+        should_ignore_untemplated=True,
+    ).instrument(app).expose(app, endpoint="/metrics", tags=["System & Infrastructure"])
+    print("✅ Prometheus metrics enabled at /metrics")
+except Exception as e:
+    print(f"⚠️ Prometheus instrumentator warning: {e}")
+
+
+# ── Observability: OpenTelemetry Distributed Tracing ──
+try:
+    import os
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+    otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317")
+    service_name = os.getenv("OTEL_SERVICE_NAME", "fastapi-core")
+
+    resource = Resource.create({"service.name": service_name})
+    provider = TracerProvider(resource=resource)
+    exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
+    processor = BatchSpanProcessor(exporter)
+    provider.add_span_processor(processor)
+    trace.set_tracer_provider(provider)
+
+    FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)
+    print(f"✅ OpenTelemetry tracing enabled (target: {otlp_endpoint}, service: {service_name})")
+except Exception as e:
+    print(f"⚠️ OpenTelemetry tracing warning: {e}")
+
+
 # ── Root Health Check ──
 @app.get("/", tags=["Health"], summary="Root Health Endpoint")
 def root():
@@ -166,4 +204,5 @@ def root():
         "docs_swagger": "/docs",
         "docs_redoc": "/redoc",
         "openapi_json": "/openapi.json",
+        "metrics_prometheus": "/metrics",
     }
